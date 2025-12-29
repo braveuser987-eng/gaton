@@ -14,35 +14,56 @@ function extraerEnlace($codigo) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // User Agent más moderno y completo
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    // Añadimos un referer para que parezca una visita orgánica
-    curl_setopt($ch, CURLOPT_REFERER, 'https://www.google.com/');
-    
+    curl_setopt($ch, CURLOPT_ENCODING, ""); // Permite comprimir la respuesta (gzip/deflate)
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+
+    // Cabeceras de alto nivel para evitar el 403
+    $headers = [
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language: es-ES,es;q=0.9,en;q=0.8',
+        'Cache-Control: max-age=0',
+        'Referer: https://www.google.com/',
+        'Sec-Ch-Ua: "Not_A brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'Sec-Ch-Ua-Mobile: ?0',
+        'Sec-Ch-Ua-Platform: "Windows"',
+        'Sec-Fetch-Dest: document',
+        'Sec-Fetch-Mode: navigate',
+        'Sec-Fetch-Site: cross-site',
+        'Sec-Fetch-User: ?1',
+        'Upgrade-Insecure-Requests: 1'
+    ];
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
     $html = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if (!$html || $httpCode !== 200) return ["error" => "No se pudo conectar. Código HTTP: $httpCode"];
+    if ($httpCode === 403) {
+        return ["error" => "Bloqueo 403: El servidor de destino sigue rechazando la conexion de Render."];
+    }
 
-    // INTENTO 1: Buscar el input name="go"
+    if (!$html) {
+        return ["error" => "No hay respuesta del servidor."];
+    }
+
+    // Busqueda del enlace en el HTML
     if (preg_match('/name="go"\s+value="([^"]+)"/', $html, $matches)) {
         return ["url" => base64_decode($matches[1])];
     }
-
-    // INTENTO 2: Buscar cualquier cadena que parezca Base64 larga dentro de un value (Plan B)
+    
+    // Segunda oportunidad: buscar cualquier cadena base64 larga
     if (preg_match('/value="([A-Za-z0-9+\/]{50,})={0,2}"/', $html, $matches)) {
         return ["url" => base64_decode($matches[1])];
     }
 
-    // Si falla, devolvemos un trozo del HTML para debug (opcional)
-    return ["error" => "No se encontro el patron. Longitud HTML: " . strlen($html)];
+    return ["error" => "Patron no encontrado. Posible cambio de estructura o Captcha."];
 }
 
 $codigoUrl = $_GET['url'] ?? null;
 
 if ($codigoUrl) {
-    // Limpieza profunda del código
+    // Extraer solo el ID final (ej: fBdzr)
     $codigoUrl = trim(basename(parse_url($codigoUrl, PHP_URL_PATH)));
     
     $resultado = extraerEnlace($codigoUrl);
