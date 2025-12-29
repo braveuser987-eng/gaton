@@ -1,21 +1,12 @@
 <?php
-// 1. Cabeceras CORS para permitir peticiones desde cualquier sitio
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+header("Access-Control-Allow-Headers: Content-Type");
 header("Content-Type: application/json; charset=UTF-8");
 
-// Responder rápido a peticiones de verificación (Preflight)
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    http_response_code(200);
-    exit;
-}
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') { exit; }
 
-/**
- * Función para obtener el HTML y extraer el enlace final
- */
 function extraerEnlace($codigo) {
-    // Reconstruimos la URL completa
     $urlCompleta = "https://softurl.in/" . $codigo;
     
     $ch = curl_init();
@@ -23,48 +14,50 @@ function extraerEnlace($codigo) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    // User Agent real para evitar bloqueos básicos
+    // User Agent más moderno y completo
     curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    // Añadimos un referer para que parezca una visita orgánica
+    curl_setopt($ch, CURLOPT_REFERER, 'https://www.google.com/');
     
     $html = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if (!$html) return null;
+    if (!$html || $httpCode !== 200) return ["error" => "No se pudo conectar. Código HTTP: $httpCode"];
 
-    // Lógica de Bypass: Buscar el valor del input "go" que contiene el Base64
+    // INTENTO 1: Buscar el input name="go"
     if (preg_match('/name="go"\s+value="([^"]+)"/', $html, $matches)) {
-        return base64_decode($matches[1]);
+        return ["url" => base64_decode($matches[1])];
     }
 
-    return null;
+    // INTENTO 2: Buscar cualquier cadena que parezca Base64 larga dentro de un value (Plan B)
+    if (preg_match('/value="([A-Za-z0-9+\/]{50,})={0,2}"/', $html, $matches)) {
+        return ["url" => base64_decode($matches[1])];
+    }
+
+    // Si falla, devolvemos un trozo del HTML para debug (opcional)
+    return ["error" => "No se encontro el patron. Longitud HTML: " . strlen($html)];
 }
 
-// 2. Procesar la petición
 $codigoUrl = $_GET['url'] ?? null;
 
 if ($codigoUrl) {
-    // Limpiamos el código por si envías caracteres extraños
-    $codigoUrl = trim(str_replace(['https://softurl.in/', '/'], '', $codigoUrl));
+    // Limpieza profunda del código
+    $codigoUrl = trim(basename(parse_url($codigoUrl, PHP_URL_PATH)));
     
     $resultado = extraerEnlace($codigoUrl);
 
-    if ($resultado) {
+    if (isset($resultado['url'])) {
         echo json_encode([
             "status" => "success",
-            "codigo" => $codigoUrl,
-            "url_limpia" => $resultado
+            "url_limpia" => $resultado['url']
         ]);
     } else {
-        http_response_code(404);
         echo json_encode([
             "status" => "error",
-            "message" => "No se pudo encontrar el enlace en el HTML"
+            "details" => $resultado['error']
         ]);
     }
 } else {
-    http_response_code(400);
-    echo json_encode([
-        "status" => "error",
-        "message" => "Falta el parámetro 'url' con el código"
-    ]);
+    echo json_encode(["status" => "error", "message" => "Falta parametro url"]);
 }
